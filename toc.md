@@ -25,3 +25,8 @@ CS 246E - Object Oriented Software Development (Enriched)
 17. [Abstraction over Containers](17.md)
 18. [Heterogeneous Data](18.md)
 19. [I'm Leaking!](19.md)
+20. [I want a class with no objects](20.md)
+21. [The copier is broken](21.md)
+22. [I want to know what kind of Book I have](22.md)
+ - [A Big Unit on Object Oriented Design](22a.md)
+
