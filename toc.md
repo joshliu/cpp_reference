@@ -29,4 +29,7 @@ CS 246E - Object Oriented Software Development (Enriched)
 21. [The copier is broken](21.md)
 22. [I want to know what kind of Book I have](22.md)
  - [A Big Unit on Object Oriented Design](22a.md)
-
+23. [Shared Ownership](23.md)
+24. [Abstraction over Iterators](24.md)
+25. [I want an even faster vector](25.md)
+27. [Collecting Stats](27.md)
