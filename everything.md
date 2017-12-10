@@ -3158,24 +3158,24 @@ If b is a Comic, why is it acting like a Book?
 Consequence of **stack-allocated** objects:
 ```
 Book b - sets aside enough space to hold a Book.
-+------+
-|      |
-+------+
-|      |
-+------+
-|      |
-+------+
++---------+
+|         |
++---------+
+|         |
++---------+
+|         |
++---------+
 
 Comic {...} - doesn't fit into the book sized hole.
-+------+
-|      |
-+------+
-|      |
-+------+
-|      |
-+------+
-|      |
-+------+
++---------+
+|         |
++---------+
+|         |
++---------+
+|         |
++---------+
+|         |
++---------+
 ```
 - Keeps only the book part - the comic part is chopped off.
 - This is known as **slicing.**
@@ -3226,7 +3226,2773 @@ public:
 p->isHeavy(); // true!!!!
 ```
 
+Assume isHeavy is virtual.
+
+Can now have a truly heterogeneous colection.
+```c++
+vector<Book*> library;
+library.push_back(new Book{...});
+library.push_back(new Comic{...});
+```
+
+even better: `vector<unique_ptr<Book>> library;`
+
+Now we can do this:
+```c++
+int howManyHeavy(const vector<Book*>&v) {
+	int count = 0;
+	for (auto &b:v) {
+		if (b->isHeavy()) ++count;
+	}
+	return count;
+}
+```
+- correct version of isHeavy always chosen, even though we don't know what's in the vector, and the items are probably not the same type.
+- polymorphism
+
+```c++
+for (auto &b:library) delete b; // not necessary if library is a vector of unique_ptrs
+```
+How do virtual methods work and why are they more expensive?
+- Implementation-dependent, but the following is typical:
+
+```
+Book b1;
++------------+
+| vptr       | // points at book vtable.
++------------+
+| title      |
++------------+
+| author     |
++------------+
+| length     |
++------------+
+
+Book b2;
++------------+
+| vptr       | // points at book vtable.
++------------+
+| title      |
++------------+
+| author     |
++------------+
+| length     |
++------------+
+
+comic c;
++------------+
+| vptr       | // points at comic vtable.
++------------+
+| title      |
++------------+
+| author     |
++------------+
+| length     |
++------------+
+| hero       |
++------------+
+
+
+// Vtables: virtual methods only (decided at runtime)
++------------+
+| "Book"     |
++------------+
+| isHeavy    | // points at Book::isHeavy
++------------+
+
++------------+
+| "Comic"    |
++------------+
+| isHeavy    | // points at Comic::isHeavy
++------------+
+```
+
+Non-virtual methods - ordinary function calls.
+
+If there is at least one virtual method 
+- compiler creates a table of function pointers
+	- one per class
+	- called the vtable
+- each object cointains a pointer to its class's vtable - the vptr.
+- calling the virtual method: 
+	- follow the vptr to the vtable
+	- follow the function pointer to the correct function.
+
+vptr is often the first field:
+- so that a subclass object still looks like a superclass object
+- so the program knows where the vptr is
+- so virtual methods incur a cost in time (extra pointer dereferences) and space (each object gets a vptr)
+- if a subclass doesn't override a virtual method, its vtable will point to the superclass implementation.
 
 <hr>
 
 [<<< Previous](17.md)  \|   [Next >>>](19.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](18.md)   \|   [Next >>>](20.md)
+
+# Problem 19 - I'm Leaking!
+Consider:
+```c++
+class X {
+	int *a;
+public:
+	X (int n): a{new int[n]} {}
+	~X() { delete [] a }
+};
+
+class Y: public X {
+	int *b;
+public:
+	Y(int n, int m): X{n}, b{new int[m]} {}
+	~Y() {delete [] b;}
+};
+
+// Note: Y's destructor will call X's destructor (Step 3)
+
+X *px = new Y{3,4};
+delete px; // Leaks.
+```
+
+Calls X's destructor, but not Y's.
+Solution - make the destructor virtual.
+```c++
+class X {
+	...
+public:
+	...
+	virtual ~X() {delete [] a;}
+}
+```
+- No more leak.
+
+Always make the destructor virtual in classes that are meant to be superclasses. Even if the destructor does nothing, you never know what the subclass might do, so you need to make sure its destructor gets called.
+
+If a class is not meant to be a superclass- no need to incur the cost of virtual methods.
+- leave the destructor non-virtual.
+
+```
+class X final { // cannot be subclassed.
+	...
+};
+```
+
+<hr>
+
+[<<< Previous](18.md)  \|   [Next >>>](20.md)[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](19.md)   \|   [Next >>>](21.md)
+
+# Problem 20 - I want a class with no objects
+```c++
+class Student {
+ public:
+  virtual float fees() const;
+};
+
+class RegularStudent: public Student {
+ public:
+  Float fees() const override; // regular student fees.
+};
+
+class CoOpStudent: public Student {
+ public:
+  Float fees() const override; // co-op student fees
+}
+```
+
+What should student::fees do?
+
+Don't know - every student should be Regular or Co-op.
+
+Solution: explicitly give `Student::fees` no implementation.
+```c++
+class Student { // called an abstract class
+ public:
+  virtual float fees() const = 0; // called a pure virtual method
+};
+```
+Abstract classes cannot be instatiated.
+```c++
+Student s;
+Student *s = new Student;
+```
+Can point to instances of concrete classes.
+```c++
+Student *s = new RegularStudent;
+```
+
+Subclasses of abstract classes are abstract, unless they implement all of the pure virtual methods.
+
+Abstract classes 
+- used to organize concrete classes
+- can contain common fields, methods, default implementation.
+
+<hr>
+
+[<<< Previous](19.md)  \|   [Next >>>](21.md)[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](20.md)   \|   [Next >>>](22.md)
+
+# Problem 21 - The copier is broken.
+
+How do copies and moves interact with inheritance?
+
+Copy constructor: `Text::Text(const Text &other): Book{other}, topic{other.topic} {}`
+
+Move constructor: `Text::Text(Text &&other): Book{std::move(other)}, topic{std::move(other.topic)} {}`
+
+Copy/Move assignment:
+```c++
+Text &Text::operator=(Text other) {
+  Book::operator=(std::move(other));
+  topic = std::move(other.topic);
+}
+```
+
+But consider:
+```c++
+Book *b1 = new Text{...}, *b2 = new Text{...};
+*b1 = *b2;
+```
+What happens? - only the Book part is copied - partial assignment
+- topic doesn't match the title and author, object is corrupted.
+
+Possible solution- Make operator= virtual
+```c++
+class Book {
+  ...
+  public:
+    virtual Book *operator=(const Book &other);
+};
+
+class Text: public Book {
+  ...
+  public:
+    // Text &operator=(const Text &other) override;
+    Text &operator=(const Book &other) override; // must take a Book or its not an override.
+};
+```
+- This doesn't compile
+
+Another solution: Make all superclasses abstract.
+
+Old:
+```
+   [Book]
+    /   \
+[Text] [Comic]
+```
+Instead:
+```
+    [Abstract Book]
+     /     |     \
+ [Book] [Text] [Comic]
+```
+
+```c++
+class AbstractBook {
+  ...
+  protected:
+    AbstractBook &operator=(AbstractBook other) {...} // non virtual
+
+};
+
+class Text: public AbstractBook {
+  public:
+    Text &operator=(Text other) {
+      AbstractBook::operator=(std::move(other));
+      topic = std::move(other.topic);
+    }
+    // operator= non virtual, therefore no mixed assignment
+};
+```
+`AbstractBook::operator=` not accessibile to outsiders, therefore `*b1 = *b2` won't compile.
+
+
+<hr>
+
+[<<< Previous](20.md)  \|   [Next >>>](22.md)[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](21.md)   \|   [Next >>>](22a.md)
+
+# Problem 22 - I want to know what kind of Book I have
+For simplicity: Assume:
+```
+   [Book]
+    /   \
+[Text] [Comic]
+```
+
+The C++ casting operators - 4 operators.
+
+C style casting: `(type) expr`
+- forces expr to be treated as type "type"
+- e.g. 
+```c++
+int *p;
+int q = (int) p;
+```
+
+1. static_cast - for conversions with a well-defined semantics
+- e.g.
+```c++
+void f(int a); void f(double d);
+int x;
+f(static_cast<double>(x));
+```
+e.g. superclass pointer to subclass pointer
+```c++
+Book *b = new Text {...};
+Text *t = static_cast<Text*>(b);
+```
+- You have to know that b really points to a Text, otherwise undefined behavior.
+
+2. reinterpret_cast - for casts without a well-defined semantics
+- unsafe, inplementation-dependent
+```c++
+Book *b = new Book {...};
+int *p = reinterpret_cast<int*>(b);
+```
+
+3. const_cast
+- for adding and removing const
+- the only C++ cast that can "cast away const"
+```c++
+void g(Book &b); // assume we know g won't change b
+f(const Book &b) {
+  g(const_cast<Book&>(b));
+}
+```
+
+4. dynamic_cast
+- What if we don't know whether pb poitns at a Text?
+```c++
+Book *pb = ...
+Text *pt = dynamic_cast<Text*>(pb);
+// if *pb is a Text or a subclass of text, then cast succeeds, pt points at the object
+// else, pt = nullptr;
+```
+e.g.
+```c++
+void whatIsIt(Book *pb) {
+    if (dynamic_cast<Text*>(pb)) cout << "Text";
+    else if (dynamic_cast<Comic*>(pb)) cout << "Comic";
+    else cout << "Book";
+}
+```
+- not good style - when you create a new book type the function has to be changed.
+
+Dynamic reference casting:
+```c++
+Book *pb = ...;
+Text &t = dynamic_cast<Text&>(*pb);
+// If *pb is a Text - ok
+// else, raises std::bad_cast
+```
+
+Dynamic Casting works by accessing an object's Run-Time Type Information (RTTI)
+- this is stored in the vtable for the class
+- therefore, can only dynamic_cast on objects with at least one virtual method.
+
+Dynamic Reference Casting offers a possible solution to the polymorphic assignment problem.
+```c++
+Text &Text::operator=(Book other) {
+  Text &textother = dynamic_cast<Text&>(other); // throws if other is not a Text
+  if (this == &textother) return *this;
+  Book::operator=(std::move(textother));
+  topic=std::move(textother.topic);
+  return *this;
+}
+```
+
+<hr>
+
+[<<< Previous](21.md)  \|   [Next >>>](22a.md)[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](22a.md)   \|   [Next >>>](24.md)
+
+# Problem 23: Shared Ownership
+Is C++ hard? No (if you're a client programmer)
+
+But explicit memory management
+- use vector if you need an array
+- use unique_ptr if you need a heap obj.
+- use stack-allocated objects as much as possible
+
+If you follow these, you should never have to say delete or delete[].
+
+But unique_ptr doesn't respect is-a
+
+```c++
+unique_ptr<Base> p (new Derived); // OK
+p->virtfn(); // runs derived version, OK
+
+unique_ptr<Derived> q = ...
+unique_ptr<Base> = std::move(q); // Type error.
+// No conversion between unique_ptr<Derived> and unique_ptr<Base>
+// Note: std::unique_ptr can do this, but our version cannot.
+```
+
+Easy to fix:
+```c++
+template <typename T> class unique_ptr {
+	T *p;
+	...
+	public:
+	...
+	template <typename U> unique_ptr(unique_ptr<U> &&q): p{q.p} {q.p = nullptr;}
+	template <typename U> unique_ptr &operator=(unique_ptr<U> &&q) {
+		std::swap(p, q.p);
+		return *this;
+	}
+}
+```
+- Works for any unique_ptr whose ptr is assignment_compatible with this->p
+e.g. subtypes of T, but not supertypes of T.
+
+But I want two smart ptrs pointing at the same object. 
+- Why? the pointer that owns the object should be a unique_ptr
+- all others could be raw pointers
+
+When would you want true shared ownership?
+
+Recall (Racket):
+```racket
+(define l1 (cons 1 (cons 2 (cons 3 empty))))
+(define l2 (cons 4 (rest (l1))))
++-+-+   +-+-+   +-+-+
+|1|*|-->|2|*|-->|3|\|
++-+-+   +-+-+   +-+-+
+         ^
++-+-+    |
+|4|*|----+
++-+-+
+```
+- Shared data structures ar ea nightmare in C - how can we ensure each node is freed exactly once?
+- Easy in garbage collected languages.
+
+What can C++ do?
+```c++
+template <typename T> class shared_ptr {
+	T *p;
+	int *refcount;
+	public:
+};
+// refcount counts how many shared_ptrs point at *p
+// updated each time a shared_ptr is initalized/assigned/destroyed
+// refcount is shared among all shared_ptrs that point to *p
+// p is only deleted if its refcount reaches 0.
+// implementation details - exercise
+```
+
+Now deallocation is easy - as easy as garbage collection
+
+Just watch: cycles
+```c++
++-+-+   +-+-+
+|1|*|-->|2|*|
++-+-+   +-+-+ 
+ ^         |
+ +---------+
+```
+- If you have cyclic data - you may have to physically break the cycle. (or use weak_ptrs)
+
+Also watch: 
+```c++
+Book *p = new ...
+shared_ptr<Book> p1 {p};
+shared_ptr<Book> p2 {p};
+```
+- shared_ptrs are not mind-readers
+- p1 and p2 will not share a ref count. - BAD
+- if you want 2 shared_ptrs at an object, create one shared_ptr and copy it.
+
+But - you can't dynamic_cast these pointers:
+```c++
+template <typename T, typename U> 
+shared_ptr<T> dynamic_pointer_cast(const shared_ptr<U> &spu) {
+	return shared_ptr<T>(dynamic_cast<T*>(spu.get()));
+}
+similarly- const_pointer_cast, static_pointer_cast
+```
+
+<hr>
+
+[<<< Previous](22a.md)  \|   [Next >>>](24.md)[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](23.md)   \|   [Next >>>](25.md)
+
+# Problem 24: Abstraction over Iterators
+
+I want to jump ahead n spots in my container.
+```c++
+template <typename Iter> Iter advance(Iter it, ptrdiff_t n);
+```
+
+How should we do it?
+```c++
+for (ptrdiff_t r = 0; i < n; ++i) ++it;
+return it; 
+
+// slow - O(n)
+// can't we just say it += n?
+```
+
+Depends - for vectors - yes O(1) time.
+- for list - no, += not supported
+
+Related - can we go backwards?
+- vectors - yes
+- lists - no
+
+So all iterators support !=, \*, +
+- but some iterators support other operations
+- `list::iterator` - called a **forward iterator** - can only go one step forward.
+- `vector::iterator` - called a **random access iterator** - arbitrary pointer arithmetic
+
+How can we write advance to use += for random-access iterators, and a loop for forward iterators?
+
+Since we have different kinds of iterators, let's create a type hierarchy:
+```c++
+struct input_iterator_tag{};
+struct output_iterator_tag{};
+struct forward_iterator_tag: public input_iterator_tag{};
+struct bidirectional_iterator_tag: public forward_iterator_tag{};
+struct random_access_iterator_tag: public bidirectional_iterator_tag{};
+```
+
+To associate each iterator class with a tag - could use inheritance:
+```c++
+class list {
+	...
+	public:
+	class iterator: public forward_iterator_tag {
+	...
+	};
+};
+```
+- But, makes it hard to ask what kind of iterator we have (Can't dynamic_cast, no vtables)
+- doesn't work for iterators that aren't classes (e.g. ptrs for vectors)
+
+Instead - make the tag a memeber:
+```c++
+class list{
+	...
+	public: 
+	class iterator {
+		...
+		public:
+		using iterator_category = forward_iterator_tag;
+	};
+	// convention - every iterator class will define a type member called iterator_category
+};
+```
+- also doesn't work for iterators that aren't classes.
+- But we aren't done yet.
+- Make a template that associates ever iterator type with its category:
+
+```c++
+template <typename It> struct iterator_traits {
+	using iterator_category = typename It::iterator_category;
+}
+// eg. iterator_traits<List<T>::iterator>::iterator_category => forward_iterator_tag
+```
+
+Provide a specialized version for pointers:
+```c++
+template <typename T> struct iterator_traits<T*> {
+	using iterator_category = random_access_iterator_tag;
+};
+```
+Why typename? Needed that so that C++ can tell that It::iterator_category is a type..
+
+consider:
+```c++
+template <typename T> void f() {
+	T::something x;
+}
+
+// but:
+
+template <typename T> void f() {
+	T::something *x; 
+	// ptr declaration or multiplication? need to know if T::something is a type
+	// C++ always assumes is value unless told otherwise
+}
+
+// so do this:
+template <typename T> void f() {
+	typename T::something x;
+	typename T::something *y;
+}
+
+// need to say typename whenever you refer to a member type of a template param.
+```
+
+Back to iterator_traits
+For any iterator type T, iterator_traits<T>::iterator_category resolves to the tag struct for T. (Incl. if T is a pointer):
+
+What do we do with this?
+
+Want:
+```c++
+template <typename Iter>
+Iter advance(Iter it, ptrdiff_t n) {
+	if (typeid(typename iterator_traits<Iter>::iterator_category) 
+		== typeid(random_access_iterator_tag)) {
+		return it += n;
+	} else {
+		...
+	}
+
+}
+```
+- Won't compile.
+- If the iterator is not random access, and doesn't have a += operator, it += n will cause a compilation error, even though it will never be used.
+- Moreover, the choice of which implementation to use is being made at run-time, when the right choice is known at compile-time
+
+To make a compile-time decision - overloading
+- make a dummy parameter with type of the iterator tag.
+```c++
+template <typename Iter>
+Iter doAdvance(Iter it, ptrdiff_t n, random_access_iterator_tag) {
+	return it += n;
+}
+
+template <typename Iter>
+Iter doAdvance(Iter it, ptrdiff_t n, bidirectional_iterator_tag) {
+	if (n > 0) for (ptrdiff_t i = 0; i < n; ++i) ++it;
+	else if (n < 0) for (ptrdiff_t i = 0; i > n; --i) --it;
+	return it;
+}
+
+template <typename Iter>
+Iter doAdvance(Iter it, ptrdiff_t n, forward_iterator_tag) {
+	if (n >= 0) {
+		for (ptrdiff_t i = 0; i < n; ++i) ++it;
+		return it;
+	}
+	throw SomeError{};
+}
+```
+
+Finally, create a wrapper function to select the right overload:
+```c++
+template <typename Iter>
+Iter advance(Iter it, ptrdiff_t n) {
+	return doAdvance(it, n, typename iterator_traits<Iter>::iterator_category {});
+}
+```
+
+Now the compiler will select the fast doAdvance for random access iterators, the slow doAdvance for bidirectional iterators, and the throwing doAdvance for forward iterators.
+
+These choices made at compile-time - no runtime cost.
+
+Using templates to perform compile-time computation - called **template metaprogramming**
+
+C++ templates form a functional language that operates at the level of types.
+- Express conditions by overloading, repetition via recursive template instatiation.
+
+Example:
+```c++
+template <int N> struct Fact {
+	static const int value = N * Fact<N-1>::value;
+};
+
+template<> struct Fact<0> {
+	static const int value = 1;
+};
+
+int x = Fact<5>::value; // 120 - evaluated at compile-time!!!
+```
+
+But for compile-time computation of values, C++ 11/14 offer a more straightforward facility:
+
+```c++
+constexpr int fact(int n) {
+	if (n == 0) return 1;
+	return n * cat(n-1);
+}
+```
+### constexpr functions:
+- means evaluate this at compile time if possible, e.g. if arguments known at compile time.
+- else, evaluate at runtime.
+- A consexpr funciton must be something that can actually be evaluated at compile-time, can't be virtual, can't mutate non-local vars, etc.
+
+<hr>
+
+[<<< Previous](23.md)  \|   [Next >>>](25.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](24.md)   \|   [Next >>>](26.md)
+
+# Problem 25: I want an even faster vector.
+
+In the good old days of C, you could copy an array (even an array of structs) very quickly, by calling memcpy (similar to strcpy, but for arbitrary memory, not just string)
+
+memcpy was probably written in assembly, and was as fast as the machine could possibly be.
+
+Nowadays in C++, copies invoke copy constructures, which are costly function calls.
+
+But there is good news.
+In C++, a type is considered POD (plain old data) if it:
+- has a trivial default constructor (equiv. to =default)
+- is trivially copyable - copy/move operations, destructor have default implementations
+- is standard layout - no virtual methods or bases, all members have same visibility, no reference members, no fields in both base class and subclass, or in multiple base classes.
+
+For POD types, semantics is compatible with C, and memcpy is safe to use.
+
+How can we use it - only safe if T is a POD type.
+
+One option: use std::is_pod<T>::value at runtime.
+```c++
+template <typename T> class vector {
+    size_t size, cap;
+    T *theVector;
+    public:
+    ...
+    vector(const vector &other): ... {
+        if (std::is_pod<T>::value) {
+            memcpy(theVector, other.theVector, n*sizeof(T));
+        }
+        else {
+            // as before
+        }
+    }
+};
+```
+- Works, but condition is evaluated at run-time, but result is known at compile time. (compiler may or may not optimize)
+
+Second option: no runtime cost
+```c++
+template <typename T> class vector {
+    ...
+    public:
+    ...
+    template <typename X=T> 
+    vector(enable_if<std::is_pod<X>::value, const T&>::type other): ... {
+        memcpy(theVector, other.theVector, n*sizeof(T));
+    }
+
+    template <typename X=T>
+    vector(enable_if<!std::is_pod<X>::value, const T&>::type other): ... {
+        // original implementation
+    }
+};
+```
+How does this work?
+```c++
+template <bool b, typename T> struct enable_if;
+template <typename T> struct enable_if<true, T> {
+    using type = T;
+};
+```
+With metaprogramming, what you don't say is as important as what you do say.
+
+If b is true, enable_if defines a struct whose 'type' member typedef is T.
+
+So if `std::is_pod<T>::value` is true, then `enable_if<is_pod<T>::value, const vector<T>&>::type` is `const vector<T>&`
+
+If b is false, the struct is declared but not defined, so `enable_if<b, T>` will not compile. One of the two versions of the copy constructor won't compile (false condition).
+
+Then how is this a valid program?
+
+**C++ rule: SFINAE - Substitution Failure Is Not An Error**
+- In other words, if t is a type, `template <typename T> _ f (_) {_}` is a template function, and substituting `T = t` results in an invalid function, the compiler does not signal an error, it just removes that instantiation from consideration during overload resolution.
+- On the other hand, if no version of the function is in scope and substitutes validly, that is an error.
+
+Question: Why is this wrong?
+```c++
+template <typename T> class vector {
+    ...
+    public:
+    vector(typename enable_if<std::is_pod<T>::value, const vector<T>&>::type other): ... {...}
+};
+```
+I.e. why do we need the extra template outfront?
+
+Because SFINAE applies to template functions, and these methods are ordinary functions, not templates
+- They depend on T, but T's value was determined when you decided what to put in the vector.
+- If substituting T=T fails, it will invalidate the entire vector class, not just the method.
+
+So make the mthod a separate template, with a new arg X, which can be defaulted to T, and do `is_pod<x>`, `not is_pod<x>`.
+
+...this compiles, but when we run it, it crashes.
+
+Why? Hint: if you put debug statements into both of these constructors, they don't print.
+- Answer: we're getting the compiler supplied copy constructor, which is doing shallow copies.
+
+These templates are not enough to suppress the auto-generated copy constructor
+- and a non-templated match is always preferred to a templated one.
+
+What do we do about it? Could try:
+```c++
+template <typename T> class vector {
+    ...
+    public:
+    vector(const vector &other)=delete; // i.e. disable the copy constructor
+};
+```
+- However the compiler won't let you do this, can't disable the copy constructor and then create one.
+
+Solution that works: overloading.
+```c++
+template <typename T> class vector {
+    struct dummy{};
+    ...
+    public:
+    vector(const vector &other): vector{other, dummy{}} {}
+    // this is constructor delegation.
+    template <typename X=T>
+    vector(typename enable_if<std::is_pod<T>::value, const vector <T>&>::type other, dummy) {
+        ...
+    }
+    template <typename X=T>
+    vector(typename enable_if<!std::is_pod<T>::value, const vector <T>&>::type other, dummy) {
+        ...
+    }
+}
+```
+- overload the constructor with an unused dummy arg.
+- have the copy constructor delegate to the overloaded constructor
+- copy constructor is inline, so no function call overhead
+- **this works.**
+
+As of 2014, can write some "helper" definitions to make `is_pod` and `enable_if` easier to use.
+```c++
+template <typename T> constexpr bool is_pod_v = std::ispod<T>::value;
+template <bool v, typename T> using enable_if_t = typename enable_if<T>::type;
+
+template <typename T> class vector {
+    ...
+    public:
+    ...
+    template <typename X=T> vector(enable_if_t<is_pod_v<x>, const vector<T>&> other, dummy) {...}
+     template <typename X=T> vector(enable_if_t<!is_pod_v<x>, const vector<T>&> other, dummy) {...}
+};
+```
+
+## Move/forward implementation:
+- We not have enough machinery to implement `std::move` and `std::forward`.
+
+`std::move` - first attempt
+```c++
+template <typename T> T&& move(T &&x) {
+    return static_cast<T&&> (x);
+}
+```
+- Doesn't quite work. T&& is a universal ref, not an rvalue ref.
+- If x was an lvalue ref, T&& is an lvalue ref.
+- Need to make sure T is not an lvalue ref.
+    - If T is an lvalue ref, get rid of the ref.
+
+std::move - correct:
+```c++
+template <typename T> inline typename std::remove_reference<T>::type&& move(T&& x) {
+    return static_cast<typename std::remove_reference<T>::type &&>(x);
+}
+```
+- `std::remove_reference<T>` turns t&, t&& into t.
+- Exercise - Write remove_reference
+
+Question: Can we save typing and use auto?
+```c++
+template <typename T> auto move(T &&x) {...}
+```
+
+Answer: NO!
+```c++
+int z;
+int &y = z;
+auto x = y; // x is int.
+```
+
+By ref auto&& is a universal reference.
+
+Need a type definition rule that doesn't discard refs
+
+decltype(...) - returns the type that ... was declared to have.
+decltype(var) - returns the declared type of the var
+decltype(expr) - returns lvalue or rvalue ref, depending on whether the expr is an lvalue or rvalue.
+
+```c++
+int z;
+int &y = z;
+decltype(y) x = z; // x is int&
+x = 4; // affects z
+
+auto a = z;
+a = 4; // does not affect z.
+
+decltype (z) s= z; // s is an int
+s = 5; // does not affect z.
+
+decltype((z)) r = z; // r is int&
+r = 5; // does affect z.
+```
+
+Thus:
+```c++
+decltype(auto) - perform type deduction, like auto, but use decltype rules.
+```
+
+Correct move:
+```c++
+template <typename T> decltype(auto) move(T &&x) {
+    return static_cast<std::remove_reference_t<T> &&>(x);
+}
+```
+
+`std::forward`:
+```c++
+template <typename T> inline T&& forward(T &&x) {
+    return static_cast<T&&>(x);
+}
+```
+- Reasoning: If x is an lvalue, T&& is an lvalue ref. If x is an rvalue, T&& is an rvalue ref.
+- Doesn't work. forward is called on exprs that are lvalues, that may "point" at rvalues.
+
+e.g.
+```c++
+template <typename T> void f(T&& y) {
+    ...forward(y)...
+}
+```
+- forward(y) will always yield an lvalue ref.
+
+In order to work, forward must know what type (including l/rvalue) was deduced for y, i.e. needs to know T.
+
+So in principle, `forward<T>(y)` would work.
+
+But: 2 problems
+- Supplying T means T&& is no longer universal.
+- Want to prevent user from omitting `<T>`
+
+Instead: separate lvalue/rvalue cases.
+```c++
+template <typename T> inline constexpr T&& forward(std::remove_reference_t<T> &x) noexcept {
+    return static_cast<T&&>(x);
+}
+template <typename T> inline constexpr T&& forward(std::remove_reference_t<T> &&x) noexcept {
+    return static_cast<T&&>(x);
+}
+```
+
+
+<hr>
+
+[<<< Previous](24.md)  \|   [Next >>>](26.md)[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](25.md)   \|   [Next >>>](27.md)
+
+# Problem 26: Collecting Stats
+I want to know how many Students I create.
+
+```
+class Student {
+    int assns, mt, final;
+    static int count; // static - associated with the class, not one per object
+  public:
+    student(...) { ++count; }
+    // accessors
+    static int getCount() {return count;} 
+    // static method - have no "this" param, not really methods, scoped functions.
+}
+```
+
+.cc:
+```c++
+int Student::count = 0; // must define the var
+Student s1{...}, s2{...}, s3{...};
+cout << Student::getCount() << endl; // no receiver obj.
+```
+
+Now I want to count objects in other classes. How do we abstract this solution into reusable code?
+
+```c++
+template <typename T> struct Count {
+    static int count;
+    Count() {++count;}
+    Count(const Count &) {++count;}
+    Count(Count &&) {++ count;}
+    ~Count(){--count;}
+    public:
+    static int getCount() {return count;}
+}
+
+template <typename T> int Count<T>::count = 0;
+
+
+// private inheritance
+// inherits count's impl, without creating an is_a relationship
+// members of Count become private in Student.
+class Student: Count<Student> {
+    int assns, mt, final;
+    public:
+    Student(...): .... {}
+    // accessors
+    using Count<Student>::getCount; // makes Count::getCount visible.
+};
+
+class Book: Count<Book> {
+    ...
+    public:
+    using Count<Book>::getCount;
+};
+
+```
+Why is Count a template?
+- So that for each class C, class C: Count<C> creates a new, unique instantiation of Count, for each C.
+- This gives each C its own counter, vs. sharing one for over all subclasses.
+- This technique - inheriting from a template specialized by yourself
+    - looks weird, but happens enough to have its own name: the **Curiously Recurring Template Pattern (CRTP)**
+
+
+<hr>
+
+[<<< Previous](25.md)  \|   [Next >>>](27.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](26.md)   \|   [Next >>>](28.md)
+
+# Problem 27: Resolving Method Overrides at Compile-Time
+Recall: Template Method Pattern:
+
+```c++
+class Turtle {
+    public:
+    void draw() {
+        drawHead();
+        drawShell();
+        drawFeet();
+    }
+    private:
+    void drawHead();
+    virtual void drawShell() = 0;
+    void drawFeet();
+};
+
+class RedTurtle: public Turtle {
+    void drawShell() override;
+};
+```
+
+Consider:
+```c++
+template <typename T> class Turtle {
+    public:
+    void draw() {
+        drawHead();
+        static_cast<T*>(this)->drawShell();
+        drawFeet();
+    }
+    private:
+    void drawHead();
+    void drawFeet();
+}
+
+class RedTurtle: public Turtle<RedTurtle> {
+    friend class Turtle;
+    void drawShell();
+}
+```
+- No virtual methods, no vtable lookup
+
+```c++
+class GreenTurtle: public Turtle<GreenTurtle> {
+    ...
+};
+```
+Drawback: 
+- no relationship between RedTurtle + GreenTurtle, cant store a mix of them in a container.
+- Can give Turtle class a parent.
+
+```c++
+template <typename T> class Turtle: public Enemy {
+    ...
+}
+```
+
+Then can store RedTurtle and GreenTurtles.
+- But can't access draw method.
+- Could give Enemy a virtual method.
+
+```c++
+class Enemy {
+    public:
+    virtual void draw() = 0;
+};
+```
+- but then there will be a vtable lookup.
+- on the other hand, if Turtle::draw calls several would be virtual helpers, could trade away several vtable lookups for one.
+
+
+<hr>
+
+[<<< Previous](26.md)  \|   [Next >>>](28.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](27.md)   \|   [Next >>>](29.md)
+
+# Problem 28 - Polymorphic Cloning
+```c++
+Book *pb = ...;
+Book *pb2 = // I want an exact copy of *pb.
+```
+- Can't call a constructor directly, don't know what \*pb1 is. Don't know which constructor to call.
+
+Standard Solution: virtual clone method.
+```c++
+class Book {
+    ...
+    public:
+    virtual Book *clone() {return new Book{*this};}
+};
+
+class Text {
+    ...
+    public:
+    Text *clone() override {return new Text{*this};}
+};
+
+// Comic - similar
+```
+
+Boilerplate code - can we reuse?
+
+Works better with an abstract base class.
+```c++
+class AbstractBook {
+    public:
+    virtual AbstractBook *clone() = 0;
+    virtual ~AbstractBook();
+};
+
+template <typename T> class Book_cloneable: public AbstractBook {
+    public:
+    T *clone() override {return new T{static_cast<T&>(*this)};}
+};
+
+class Book: public Book_cloneable<Book> {...};
+class Text: public Book_cloneable<Text> {...};
+// comic - similar
+```
+
+
+<hr>
+
+[<<< Previous](27.md)  \|   [Next >>>](29.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](28.md)   \|   [Next >>>](30.md)
+
+# Problem 29: Logging
+- want to encapsulate logging functionality and "add" it to any class.
+
+```c++
+template <typename T, typename Data> class Logger {
+    public:
+    void loggedSet(Data x) {
+        cout << "setting data to" << x << endl;
+        static_cast<T*>(this)->set(x);
+    }
+};
+
+class Box:public Logger<Box, int> {
+    friend class Logger<Box, int>;
+    int x;
+    void set(int y) {x = y;}
+    public:
+    Box(): x{0} {loggedSet(0);}
+};
+
+Box b;
+b.loggedSet(1);
+b.loggedSet(4);
+```
+
+Another approach:
+
+```c++
+class Box {
+    int x;
+    public:
+    Box(): x{0} {}
+    void set(int y) {x = y;}
+};
+
+template <typename T, typename Data> class Logger: public T {
+    public:
+    void loggedSet(Data x) {
+        cout << "Setting data to" << x << ednl;
+        set(x); // no vtable overhead.
+    }
+};
+
+using Boxlogger = Logger<Box,int>;
+BoxLogger b;
+b.loggedSet(1);
+b.loggedSet(4);
+```
+
+**Mixins** - can mix and match subclass functionality without writing new classes.
+- Note: if SpecialBox is a subclass of Box, then SpecialBox has no relation to Logger<Box,int>.
+- Nor is there any relationship between Logger<SpecialBox,int> and Logger<Box,int>
+
+But with CRTP, SpecialBox is a subptype of Logger<Box,int>
+- can specialize behavior of virtual functions.
+
+
+
+<hr>
+
+[<<< Previous](28.md)   \|   [Next >>>](30.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](29.md)   \|   [Next >>>](31.md)
+
+
+# Problem 30 - Total Control
+
+Can control:
+- param passing
+- initialization
+- method call resolution
+- etc.
+
+### Control over memory allocation
+Memory allocators are tricky to write - 2 Questions: Why and how?
+
+#### Why write an allocator?
+- built-in one is too slow
+    - general purpose, not optimized for specific use.
+    - eg. if you know you will always allocate objects of the same size, a custom allocator may perform better.
+- you want to optimize locality.
+    - maybe you want a separate heap, jsut for objects of some class C - keeps the objects close to each other, may improve performance
+- you want to use "special memory"
+    - put objects in shared memory
+- you want to profile the program.
+    - collect stats
+
+### How do you customize allocation?
+- overload operator new
+    - if you define a global non-member operator new, all allocations in your program will use your allocator.
+    - Also, if you write operator new, you need to write operator delete. otherwise undefined behavior.
+
+```c++
+void *operator new(size_t size) {
+    cout << "Request for " << size << " bytes \n";
+    return malloc(size);
+}
+
+void operator delete(void *p) {
+    cout << "Freeing " << p << endl;
+    free(p);
+}
+
+int main() {
+    int *x = new int;
+    delete x;
+}
+```
+- Works, but is not correct. Doesn't adhere to convention. If operator new fails, it is supposed to throw bad_alloc.
+- Actually, if operator new fails, it is supposed to call the new_handler function.
+    - the new_handler can: 
+        - free up space(somehow)
+        - install a different new_handler / uninstall the current
+        - throw bad_alloc
+        - abort or exit
+    - new_handler should be called in an infinite loop
+    - if new_handler is nullptr, operator new throws
+- Also - new must return a valid pointer if size == 0, and delete of a null ptr must be safe.
+
+Corrected implementation:
+```c++
+#include <new>
+void *operator new(size_t size) {
+    cout << "Request for " << size << " bytes \n";
+    if (size == 0) size = 1;
+    while (true) {
+        void *p = malloc(size);
+        if (p) return p;
+        std::new_handler h = std::set_new_handler(0);
+        std::set_new_handler(h);
+        if (h) h();
+        else throw std::bad_alloc{};
+    }
+}
+
+void operator delete(void *p) {
+    if (p == nullptr) return;
+    cout << "Freeing " << p << endl;
+    free(p);
+}
+```
+
+Replacing global operator new/delete affects your entire program.
+
+More likely - replace on a class-by-class basis
+- especially if you are writing allocators specifically tuned to the sizes of your objects.
+
+To do this - make operator new/delete members
+- must be *static* members.
+
+```c++
+class C {
+    public: ...
+    static void *operator new(size_t size) {
+        cout << "Running C's allocator" << endl;
+        return ::operator new(size);
+    }
+    static void operator delete(void *p) noexcept {
+        cout << "Freeing " << p << endl;
+        ::operator delete(p);
+    }
+};
+```
+
+Generalize - log to an abritrary stream
+```c++
+class C {
+    public:
+    static void *operator new(size_t size, std::ostream &out) {
+        out << ... << endl;
+        return ::operator new(size);
+    }
+};
+
+C *x = new(cout) c; // log to cout
+ofstream f {...};
+C *y = new(f) c;
+```
+
+Must also write the corresponding "placement" delete.
+```c++
+class C {
+    public:
+    ...
+    static void operator delete(void *p, std::ostream &out) noexcept {
+        out << "Placement delete: " << p << endl;
+        ::operator delete(p);
+    }
+};
+```
+Won't compile! You also need to write ordinary delete.
+
+```c++
+class C {
+    public:
+    ...
+    static void operator delete(void *p) noexcept {
+        out << "Ordinary delete (cout): " << p << endl;
+        ::operator delete(p);
+    }
+};
+
+// This will compile, however:
+
+C *p = new (cout) c;    // Running C's allocator
+delete p;               // Ordinary delete (cout)
+```
+- If the client calls delete p, there needs to be a non-specialized operator delete, else compile error.
+- How can you call specialized delete? You can't. Then why do we need it?
+    - If the constructor that called specialized operator new throws, it will call the specialized operator delete that matches operator new.
+    - If there isn't one, no delete gets called, so leak.
+
+e.g.
+```c++
+class C {
+    ...
+    public:
+    C (bool b) {if (b) throw 0; }
+};
+
+try {
+    C *p = new (cout) C {true}; // throws
+    delete p; // not reached
+}
+catch (...) {}
+
+C*q = new (cout) C {false};
+delete q;
+```
+
+Recall - specialized member new
+- Specialized member delete AND standard member delete must be written.
+
+Customizing array allocation - overload `operator new []` and `operator delete []`
+
+
+<hr>
+
+[<<< Previous](29.md)   \|   [Next >>>](31.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](30.md)   \|   [Next >>>](32.md)
+
+# Problem 31 - I want total control over vectors and lists
+
+Incorporating custom allocation into our containers.
+
+Issue - may want different allocators for different kinds of vectors
+
+Solution - Make the allocator an arg to the template.
+- Since most users won't write allocators, we will need a default value.
+
+Template signature:
+```c++
+template <typename T, typename Alloc=allocator<T>> class vector {...};
+
+// now write the interface for allocators + the allocator template:
+
+template <typename T> struct allocator {
+    using value_type = T;
+    using pointer = T*;
+    using reference = T&;
+    using const_pointer = const T*;
+    using const_reference = const T&
+    using size_type = size_t;
+    using difference_type = ptrdiff_t;
+    allocator() noexcept {}
+    allocator(const allocator &) noexcept {}
+    template <typename U> allocator(const allocator<u> &) noexcept {}
+    ~allocator() {}
+    pointer address(reference x) const noexcept {return &x;}
+    pointer allocate(size_type n) {return ::operator new(n*sizeof(T));}
+    void dellocate(pointer p, size_type n) {::operator delete(p);}
+    size_type max_size() const noexcept {
+        return std::numeric_type<size_type>::max/sizeof(value_type);
+    }
+    template <typename U, typename... Args>
+    void constrcut(U *p, Args&&... args) {
+        ::new(static_cast<void*>(p))U(forward<Args>(args)...);
+    }
+    template <typename U> void destroy(U *p) {p->~U();}
+};
+```
+
+If you want to write an allocator for an STL container, this is its interface.
+Note:
+- operator new takes a # of bytes, but allocate takes a # of objects.
+
+What happens if a vector is copied? copy the allocator?
+
+What happens if you copy an allocator? Can 2 copies allocate/deallocate each other's memory?
+
+- C++03 - allocators must be stateless, so copying allocators is allowed and trivial.
+- C++11 - allocators can have state, must specify own copying behavior via allocator traits.
+
+Adapting vector:
+- vector has a field Alloc alloc;
+- everywhere the vector calls:
+    - operator new,     replace with alloc.allocate
+    - placement new,    replace with alloc.construct
+    - explicit destructor            alloc.destroy
+    - operator delete                alloc.deallocate
+    - takes an address               alloc.address
+
+Details - exercise.
+
+Can we do the same with list?
+Not exactly.
+```c++
+template <typename T, typename Alloc=allocator<T>> class list {...};
+```
+- Correct so far... but curiously, Alloc will never be used to allocate memory in list.
+- Why not? lists are node-based, means you don't want to actually allocate T's objects, you want to allocate nodes (which contain T objs and pointers)
+- but Alloc allocates T objs.
+- Every conforming allocator has a member template called rebind that gives the allocator type for another type:
+
+```c++
+template <typename U> struct allocator {
+    ...
+    template <typename U> struct rebind {
+        using other = allocator<U>;
+    };
+    ...
+};
+```
+Within list- to create an allocator for nodes as a field of list:
+```c++
+Allocator::rebind<Node>::other alloc;
+```
+Then use as in vector. Details: exercise.
+
+<hr>
+
+[<<< Previous](30.md)   \|   [Next >>>](32.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](31.md)   \|   [Next >>>](33.md)
+
+# Problem 32: A fixed-size object allocator
+A custom allocator can be fast.
+
+Fixed size allocator: all allocated chunks are the same size (i.e customized for one class), so no need to keep track of sizes.
+
+(aside - many traditional allocators store the size of the block before the pointer, so that the allocator knows how much space is attatched to that pointer.)
+
+Fixed-size - saves space (no hidden size field)
+- saves time - no hunting for a block of the right size.
+
+Approach:
+Create a pool of memory - an array large enough to hold n T objects.
+
+Initially:
+```
++--+--+--+--+--+-----+--+
+|1 |2 |3 |4 |5 | ... |-1|
++--+--+--+--+--+-----+--+
+ 0  1  2  3  4        n-1
+```
+
+When the client has a slot: T obj:
+When we have it:
+- node in a linked list.
+- each slot stores the index of the next slot in the list.
+
+Allocation: from the front.
+```
+First free: 1
++--+--+--+--+--+-----+--+
+|//|2 |3 |4 |5 | ... |-1|
++--+--+--+--+--+-----+--+
+ 0  1  2  3  4        n-1
+
+First free: 2
++--+--+--+--+--+-----+--+
+|//|//|3 |4 |5 | ... |-1|
++--+--+--+--+--+-----+--+
+ 0  1  2  3  4        n-1
+```
+
+Deallocation:
+```
+Free item 0:
+First free: 0
++--+--+--+--+--+-----+--+
+|2 |//|3 |4 |5 | ... |-1|
++--+--+--+--+--+-----+--+
+ 0  1  2  3  4        n-1
+
+Free item 1:
+First free: 1
++--+--+--+--+--+-----+--+
+|2 |0 |3 |4 |5 | ... |-1|
++--+--+--+--+--+-----+--+
+ 0  1  2  3  4        n-1
+```
+
+Implementation:
+```c++
+template <typename T, int n> class fsAlloc {
+    union Slot { // slot large enough for a T, but still usable as an int.
+        int next;
+        T data;
+        Slot(): next{0} {}
+    };
+    Slot theSlots[n];
+    int first = 0;
+    public:
+    fsAlloc() {
+        for (int i = 0; i < n; ++i) theSlots[i] = i+1;
+        theSlots[n-1] = -1;
+    }
+    T *allocate() noexcept {
+        if (first == -1) return nullptr;
+        T *result = &(theSlots[first].data);
+        first = theSlots[first].next;
+        return result;
+    }
+    void deallocate(void *item) noexcept {
+        int index = (static_cast<char*>(item)-reinterpret_cast<char*>(theSlots))/sizeof(Slot);
+        // char* has size 1
+        theSlots[index].next = first;
+        first = index;
+    }
+};
+```
+
+Use in a class:
+```c++
+class Student final {
+    int assns, mt, final;
+    static fsAlloc<Student, SIZE> pool; // size is how many you can allocate.
+    public:
+    ...
+    static void* operator new(size_t size) {
+        if (size != sizeof(Student)) throw std::bad_alloc;
+        // already kinda avoided because Student is final class:
+        // can't have subclasses which are likely larger
+        while (true) {
+            void *p = pool.allocate();
+            if (p) return p;
+            std::new_handler h = std::set_new_handler(0);
+            std::set_new_handler(h);
+            if (h) h();
+            else throw std::bad_alloc{};
+        }
+    }
+    static void operator delete(void *p) noexcept {
+        if (p == nullptr) return;
+        pool.deallocate(p);
+    }
+};
+
+fsAlloc<Student,SIZE> Student::pool;
+```
+
+main.cc:
+```
+int main() {
+    Student *s1 = new Student;
+    Student *s2 = new Student; // these are using custom allocator
+    delete s1;
+    delete s2; // these are using custom deallocator
+}
+```
+
+Q: Where do s1, s2 reside?
+
+A: static memory (Not the heap)
+- could arrange for stack/heap memory
+
+More notes: we used a union to simultaneously hold both int and T.
+- could have used a struct `[next][T]`
+- disadvantage: if you access a dangling T pointer, you can corrupt the linked list.
+
+eg. 
+```c++
+Student *s = new Student;
+delete s;
+s->setAssns(...); // destroys the pool
+```
+Lesson: following a dangling pointer can be very dangerous.
+
+With a struct, next is before the T obj, so you have to work hard to corrupt it.
+
+```c++
+reinterpret_cast<int *>(s)[-1] = ...;
+```
+
+On the other hand - with a struct - problems if T doesn't have a default constructor.
+
+eg.
+```c++
+struct Slot {
+    int next;
+    T data;
+};
+slot theSlots[n]; // doesn't work if T has no default constructor.
+// can't do operator new/placement new
+```
+
+```c++
+union SlotChar {
+    char dummy;
+    Slot S;
+    SlotChar():dummy{0} {}
+};
+```
+Also, why store indices instead of pointers?
+- smaller than pointers on this machine, so waste no memory as long as T >= size of an int.
+- would waste if T smaller than an int
+- could use a smaller index type (as long as you don't want more items than the type can hold)
+- could make the index type a param of the template.
+Student final - fixed size allocator - subclasses might be larger
+    - options have no subclasses.
+    - check size, throw if it isn't the right size.
+    - or, give derived class its own allocator.
+    
+<hr>
+
+[<<< Previous](31.md)   \|   [Next >>>](33.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](32.md)
+
+# Problem 33 - I want a (tiny bit) smaller vector class
+
+Currently: vector/vector_base have an allocator field
+
+Standard allocator is stateless - has no fields
+
+What is its size? 0? No - C++ does not allow 0 size types, messes things up like pointer arithmetic.
+
+Every type has size >= 1. 
+
+Practically - copiler adds a dummy char to the allocator.
+
+So having an allocator field makes the vector larger by a byte. (probably more, due to alignment)
+
+Having an allocator field in vector_base may add another byte (or more)
+
+To save this space, C++ provides the empty base optimization.
+
+Under EBO - an empty base class does not have to occupy space in an object.
+
+So, we can eliminate the space cost of an allocator by making it a base class.
+
+At the same time, lets make vector_base a base class of vector.
+
+```c++
+struct vector_base: Alloc {
+    size_t n, cap;
+    T* v;
+    using Alloc::allocate;
+    using Allot::deallocate;
+    // etc.
+    vector_base(size_t n): n{0}, cap{n}, v{allocate(n)} {}
+    ~vector_base() {deallocate(v);}
+};
+
+template <typename T, typename Alloc=allocator<T>>
+
+class vector:vector_base <T,Alloc> { //private inheritance, no is-a
+    using vector_base<T,Alloc>::n;
+    using vector_base<T,Alloc>::cap;
+    using vector_base<T,Alloc>::v;
+    using Alloc::allocate;
+    using Alloc::deallocate; // or say this->allocate, this->deallocate
+    public:
+    ...
+    // now use n,cap,v instead of vb.n, vb.cap, vb.v
+}
+```
+
+`uninitialized_copy`, etc - need to call construct/destroy
+- simplest - let them take an allocator as param
+```c++
+template <typename T, typename Alloc>
+void uninitialized_fill(T *start, T *finish, const T&a, Alloc a) {
+    ...
+    a.construct(...);
+    ...
+    a.destroy(...);
+    ...
+}
+```
+
+How can vector pass an allocator to these functions?
+`uninitialized_fill(v,v+n,x,static_cast<Alloc&>(*this));`
+- cast yourself to base class reference.
+Remaining details - exercise.
+
+# Conclusions
+C++ is easy because it is hard.
+
+<hr>
+
+[<<< Previous](32.md)
+[**TABLE OF CONTENTS**](toc.md)
+
+[<<< Previous](22.md)   \|   [Next >>>](23.md)
+
+# A Big Unit on Object Oriented Design
+
+## System Modelling - UML (Unified Modelling Language)
+- Make ideas easy to communicate
+- aid design discussions
+
+```
+- private
+# protected
++ public
+
+			+--------------------+
+			|Book                | - class name, italics = abstract
+			+--------------------+
+			|-title:String       |
+			|-author:String      | } - fields (optional)
+			|#length:Integer     |
+			+--------------------+
+			|+getTitle:String    |
+			|+getAuthor:String   | } - methods (optional)
+			|+getLength:Integer  |   - italics = virtual
+			|+/isHeavy/:Boolean  |
+			+--------------------+
+		               ^
+		               |
+		   +-----------+------------+
+		   |                        |
++--------------------+      +------------------+
+|Text                |      |Comic             |
++--------------------+      +------------------+
+|-topic:String       |      |-hero:String      |
++--------------------+      +------------------+
+|+getTopic:String    |      |+getHero:String   |
+|+/isHeavy/:Boolean  |      |+isHeavy:Boolean  |
++--------------------+      +------------------+
+
+
++------------+    m +-------+
+|Car         |⬦---->|Motor  |
++------------+      +-------+
+|-VIN:Integer|
++------------+
+owns-a relationship (composition)
+- means the motor is part of the car
+	- does not have an independent existence
+	- copy/destroy the car => copy/destroy the motor (deep copies)
+- typical implementation - class composition, i.e. object fields
+
+e.g.
+class Car {Motor m;};
+
+
++----------+  0..*+-------+
+|Pond      |⬦---->|Duck   |
++----------+      +-------+
+has-a relationship (aggregation)
+- duck has its own independent existence
+- copy/destroy the pond !=> copy/destroy the ducks
+- typical implementation - pointer field
+
+e.g.
+class Pond {vector <Duck*> ducks;};
+```
+- The concept of ownership is central to Object Oriented design in C++
+- Every resource (memory, file, window, etc.) should be owned by an object that will release it - RAII
+- A unique_ptr owns the memory it points to.
+- A raw pointer should be regarded as not owning the memory it points to.
+- If you need to point at the same object with several pointers, one pointer should own it and be a unique ptr. The rest should be raw pointers. Moving a unique_ptr = transferring ownership
+- If you need true shared ownership - later
+
+
+## Measures of Design Quality
+- Coupling and Cohesion
+- Coupling - how many different modules depend on each other
+	- low to high:
+		- function calls with params/results of basic type
+		- function clals with array/struct params
+		- modules affect each other's control flow
+		- modules sharing global data
+		- modules access each other's implementation (friends)
+- Cohesion - how closely are elements of a module related to each other
+	- low to high:
+		- arbitrary grouping (e.g. utility library)
+		- common theme, otherwise unrelated, maybe some common base code (e.g. algorithm)
+		- elements manipulate state over the lifetime of an object (e.g. open/read/close files)
+		- elements pass data to each other
+		- elements cooperate to perform exactly one task
+
+High coupling - changes to a module affect other modules
+- harder to reuse individual modules
+
+E.g. function whatIsIt(dynamic_cast) - tightly coupled to the Book hierarchy, must change this function if you create another Book subclass
+
+low cohesion => poorly organized code - hard to understand, maintain
+Want high cohesion, low coupling.
+
+## SOLID Principles of OO Design
+
+### 1: Single Responsibility Principle
+- a class should only have one reason to change
+	- i.e. a class should do one thing, not several
+- Any change to the problem spec require a change to the program
+- If changes to >= 2 different parts of the spec cause changes to the same class, SRP is violated.
+E.g. Don't let your (main) classes print things
+
+Consider:
+```c++
+class Chessboard{
+	...
+	cout << "Your move";
+	...
+};
+```
+- Bad design, inhibits code reuse.
+
+What if you want a version of your program that:
+- Communicates over different streams (file/network)?
+- Works in another language?
+- Uses graphics instead of text?
+
+- Major changes to Chessboard class, instead of reuse. Violates SRP.
+	- must change the class if there is any change to the specificatino for:
+		- game rules
+		- strategy
+		- interface
+		- etc.
+	- low cohesion situation, should split these up.
+		- one module responsible for communication
+		- if a class wants to say something - do it via params, results, exceptions
+			- pass info to communications object and let it do the talking
+	- On the other hand - specificaitons that are unlikely to change may not need their own class, avoid needless complexity. Judgement call.
+
+### 2: Open/Closed Principle
+- Classes, Modules, Functions, etc. should be open for extension, and closed for modification
+- Changes in a program's behaviour should happen by writing new code- not by changing old code.
+```
++------------+      +---------+
+|Carpenter   |⬦---->|HandSaw  |
++------------+      +---------+
+```
+What if the carpenter buys a tablesaw?
+- this design is not open for extension, have to change the carpenter code.
+
+Solution: Abstraction
+```
++------------+      +---------+
+|Carpenter   |⬦---->|/Saw/    |
++------------+      +---------+
+                         ^
+                         |
+               Handsaw --+-- Tablesaw
+```
+
+Also note:
+```c++
+int countHeavy(const vector<Book*> &v) {
+	int count = 0;
+	for (auto &p:v) if (p->isHeavy()) ++count;
+	return count;
+}
+```
+
+Note: can't really be 100% closed. Same chanes may require source modification.
+Plan for the most likely changes and make your code closed with respect to those changes.
+
+### 3: Liskov Substitution Principle
+- Simply put: public inheritance must indicate an Is-A relationship.
+- But there smore to it:
+	- If B is a subtype (subclass) of A, then we should be able to make an object b of type B in any context that requires an object of type A, without affecting the correctness of the program.
+- C++'s inheritance rules already allow us to use subclass objects in place of superclass objects.
+- \* - this is the important point.
+- Informally, the program should "not be able to tell" if it is using a superclass object or a subclass object.
+
+Formally: If an invariant I is true of class A, then it must be true of class B.
+If an invariant I is true of method A::f, and B::f overrides A::f, then I must hold for B::f.
+If A::f has a precondition P and a postcondition Q, then B::f must have a precondition P'<= P, and a postcondition Q' => Q.
+
+If A::f and B::f behave differently, the difference in behavior must fall within what is allowed by the program's correctness specification.
+
+Examples:
+1. Contravariance Problem
+	- Arises any time you have a binary operator, i.e. a method with an other parameter of the same type as \*this.
+	- Violates Liskov Substitution.
+		- A circle is a shape
+		- A shape can be compared with any other shape.
+		- Therefore Circle can be compared with any other shape.
+		- We saw this with virtual operator=
+		- C++ will flag this problem iwtha compiler error.
+
+```
+    Shape
+      |
+   +--+--+
+   |     |
+Circle  Square
+```
+
+```c++
+class Shape {
+	public:
+	virtual bool operator==(const shape &other) const;
+};
+
+class Circle: public Shape {
+	public:
+	bool operator==(const Shape &other) const override;
+};
+```
+	
+Fix:
+```c++
+#include <typeinfo>
+bool Circle::operator==(const Shape &other) const {
+	if (typeid(other) != typeid(Circle)) return false;
+	const Circle &cother = static_cast <const Circle &> (other);
+	// compare fields of other with fields of *this.
+}
+```
+
+#### dynamic_cast vs typeid:
+`dynamic_cast <Circle &> (other);`
+	- is other a Circle or a subclass of Circle
+`typeid(other) == typeid(Circle)`
+	- is other precisely a circle?
+	- typeid returns an object of type typeinfo.
+
+Is square a rectangle?
+- a square has all the properties of a rectangle.
+
+```c++
+class Rectangle {
+	int length, width;
+	public:
+	Rectangle(...);
+	int getLength() const; 
+	virtual void setLength(int);
+	int getWidth() const;
+	virtual void setWidth(int);
+	int area() const{ return length * width; }
+};
+
+class Square: public Rectangle {
+	public:
+	Square(int side): Rectangle (side, side) {}
+	void setLength(int l) override {
+		Rectangle::setLength(l);
+		Rectangle::setWidth(l);
+	}
+	void setWidth(int w); //similar.
+}
+
+int f(Rectangle &r) {
+	r.setLength(10);
+	r.setWidth(20);
+	return r.area(); // expect 200
+}
+
+Sqaure s {1};
+f(s); // 400
+```
+
+Rectangles have the property that their length and width can vary independently; Squares don't have that property.
+- Therefore, this violates LSP.
+- On the other hand, an immutable square could substitute for an immutable Rectangle.
+
+```
+		       Shape
+		         ^
+		         |
+		    +----+---...
+		    |
+/RightAngledQuadrilateral/
+            ^
+            |
+       +----+-----+
+       |          |
+    Square    Rectangle
+```
+- Constraining what subclasses can do
+
+Consider:
+```c++
+class Turtle {
+	public:
+	virtual void draw() = 0;
+};
+
+class RedTurtle: public Turtle {
+	public:
+	void draw() override {
+		drawHead(); drawRedShell(); drawFeet();
+	}
+};
+
+class GreenTurtle: public Turtle {
+	public:
+	void draw() override {
+		drawHead(); drawGreenShell(), drawFeet();
+	}
+}
+```
+- code duplication
+- Plus - how can we ensure that overrides of draw will always do these things?
+
+```
+class Turtle {
+	public:
+	void draw() {
+		drawHead();
+		drawShell();
+		drawFeet();
+	}
+	private:
+	void drawHead();
+	virtual void drawShell() = 0;
+	void drawFeet();
+};
+
+class RedTurtle: public Turtle {
+	void drawShell() override;
+};
+
+class GreenTurtle: public Turtle {
+	void drawShell() override;
+};
+```
+
+Subclasses cannot control the steps of drawing a turtle, nor the drawing of head + feet.
+Can only control the drawing of a Shell - called the **Template Method Pattern**.
+
+Extension - **Non-virtual Interface** (NVI) idiom
+- public virtual methods are simultaneously: 
+	- part of a class's interface - pre/post conditions, respect invariatnes
+	- "hooks" for customization by subclasses - overriding code could be anything
+
+NVI says: all virtual methods should be private, i.e. all public methods should be non-virtual.
+Eg.
+```c++
+class DigitalMedia {
+	public:
+	virtual void play() = 0;
+};
+
+// should be
+
+class DigitalMedia {
+	public:
+	void play() {
+		doPlay();
+	}
+	private:
+	virtual void doPlay() = 0;
+};
+```
+- generalizes template method pattern
+- puts every virtual function inside a template method.
+
+### 4: Interface Segregation Principle
+Many small interfaces is better than one large interface.
+- If a class has many functionalities, each client of the class should only see the functionality it needs. 
+
+Eg. video game
+```c++
+class Enemy {
+	public:
+	virtual void strike();	// needed by game logic
+	virtual void draw();	// needed by user interface
+};
+
+class UI {
+	vector<Enemy*> v;
+};
+
+class Battlefield {
+	vector<Enemy*> v;
+};
+```
+If we need to chang ethe drawing interface, Battlefield must recompile for no reason.
+
+Creates needless coupling between UI and Battlefield.
+
+One solution: Multiple Inheritance
+```c++
+class Draw {
+	public:
+	virtual void draw() = 0;
+};
+
+class Combat {
+	public:
+	virtual void strike() = 0;
+};
+
+class Enemy: public Draw, public Combat {};
+
+class UI {
+	vector <Draw *> v;
+};
+
+class Battlefield {
+	vector <Combat *> v;
+};
+```
+Example of the Adapter Pattern
+General use of Adapter - when a class provides an interface different from the one you need:
+```
+Eg.
+
++----------------+   +----------------+
+|Needed Interface|   |Provided Class  |
++----------------+   +----------------+
+|+g()            |   |+f()            |
++----------------+   +----------------+
+        ^                     ^
+        |                     |
+        +----------+----------+
+                   |
+            +--------------+
+            |Adapter       |
+            +--------------+  +--------------+
+            |+g()----------|--|{f();}        |
+            +--------------+  +--------------+
+
+```
+Detour: issues with Multiple Inheritance
+```
++------+    +------+
+|A1    |    |A2    |
++------+    +------+
+|+a()  |    |+a()  |
++------+    +------+
+    ^         ^
+    |         |
+    +----+----+
+         |
+       +---+
+       |B  |
+       +---+ - has 2 a() methods
+
+       +---+
+       |A  |
+       +---+
+         ^
+         |
+    +----+-----+
+    |          |
+ +---+        +---+
+ |B  |        |C  |
+ +---+        +---+
+    ^          ^
+    |          |
+    +----+-----+
+         |
+       +---+ - has 2 a() methods, and they're different.
+       |D  |
+       +---+
+```
+
+```c++
+class D: public B, public C {
+	void f() {... a() ...}
+};
+
+D d;
+d.a(); // use d.B::a() or d.C::a()
+```
+
+OR,
+
+Maybe there should only be one A base, and therefore only one a().
+
+```c++
+class B: virtual public A {...};
+class C: virtual public A {...};
+d.a() - no longer ambiguous
+```
+
+Eg. iostream hierarchy
+```
+       ios_base
+          |
+         ios
+       v/   \v
+  istream   ostream
+        \   /
+       iostream
+        /    \
+  fstream    stringstream
+```
+
+Problem- How will a class like D be laid out in memory? (implementation specific)
+
+Consider:
+```
++---------+ <--- should look like an A*, B*, C*, D*, but doesn't look like a C*.
+|vptr     |
++---------+
+|A fields |
++---------+
+|B fields |
++---------+
+|C fields |
++---------+
+|D fields |
++---------+
+
+but g++ gives us:
+
++---------+ <--- D*, B*(?)
+|vptr     |
++---------+
+|B fields |
++---------+ <--- C*(?)
+|vptr     |
++---------+
+|C fields |
++---------+
+|D fields |
++---------+ <--- A*
+|vptr     |
++---------+
+|A fields |
++---------+
+```
+- B and C need to be laid out so that we can find the A part, but the distance is not known (depends on the run-time type of the object)
+- **Solution:** location of base object stored in vtable.
+- Also note - diagram doesn't simultaneously look like A,B,C,D, but slices of it do.
+Therefore pointer assignment among A,B,C,D ptrs  may change the address stored in the pointer.
+
+```c++
+D *d = ...;
+A *a = d; // changes the address.
+```
+- static_cast, const_cast, dynamic_cast under Multiple Inheritance will also adjust the value of the pointer.
+- reinterpret_cast will not.
+
+### 5: Dependency Inversion Principle
+- High level modules should not depend on low-level modules. Both should depend on abstraction.
+- Abstract classes should never depend on concrete classes.
+
+Traditional top-down design:
+```
++------------------+         +----------------+
+|High-level module |-------->|Low-level module|
++------------------+         +----------------+
+
+e.g.
++------------------+         +----------------+
+|Word Count        |-------->|Keyboard Reader |
++------------------+         +----------------+
+- what if I want to use a file reader?
+- changes to details affect the higher level word count module.
+```
+
+Dependency inversion:
+```
++------------------+         +---------------------+
+|High-level module |-------->|Low-level Abstraction|
++------------------+         +---------------------+
+                                        ^
+                                        |
+                                        |
+                             +---------------------+
+                             |Low-level module     |
+                             +---------------------+
+
++------------------+         +---------------------+
+|WordCount         |-------->|/Input Interface/    |
++------------------+         +---------------------+
+                                        ^
+                                        |
+                                 +------+------+
+                                 |             |
+                        +------------+      +----------+
+                        |Keyboard    |      |File      |
+                        |Reader      |      |Reader    |
+                        +------------+      +----------+
+```
+
+Works over several layers as well.
+```
+high -> medium -> low
+
+=>
+
+high -> medInterface
+             ^
+             |
+           medium -> lowInterface
+                          ^
+                          |
+                         low
+```
+
+eg.
+```
+timer⬦---->bell
+           +notify()
+
+when the timer hits some specified time, it rings the bell.
+(calls Bell::notify, which rings the bell)
+
+What if we want the timer to trigger other events?
+
+timer⬦---->/responder/
+           +notify()
+                ^
+                |
+          +-----+------+
+          |            |
+        Bell         Lights
+        +notify()    +notify()
+```
+
+Maybe we want a dynamic set of responders:
+```
++---------------------+        +-------------+
+|Timer                |⬦------>|Responder    |
++---------------------+        +-------------+
+|+register(Responder) |<------⬦|+notify()    |
+|+unregister(Responder)        +-------------+
++---------------------+               ^
+                                      |
+                                +-----+------+
+                                |            |
+                               Bell         Light
+
+Now Responder is depending on the concrete timer class, apply dependency inversion again.
+                              *
+/Source/⬦--------------------->/Responder/
++register(Responder)           +notify()
++unregister(Responder)             ^
+    ^                              |
+    |                        +-----+------+
+    |                        |            |
+Timer()<------------------⬦Bell     +--⬦Light
+    ^                               |
+    +-------------------------------+
+
+If Bell/Light's behavior depends on the time, 
+may need to depend on the concrete timer for a getTime method.
+- could dependency invert this again, if you wanted.
+
+General Solution: known as the Observer Pattern.
++----------------+             +----------------+ 
+|/Subject/       |             |/Observer/      |
++----------------+⬦----------->+----------------+ 
+|+notifyObservers|             |+notify()       |
+|+attatch(Obs)   |             +----------------+ 
+|+detatch(Obs)   |                      ^
++----------------+                      |
+        ^                               |
+        |                               |
++----------------+             +-----------------+
+|ConcreteSubject |             |Concrete Observer|
++----------------+<-----------⬦+-----------------+
+|+getState()     |             |+notify()        |
++----------------+             +-----------------+
+```
+
+Sequence of Calls:
+1. Subject's state changes
+2. `Subject::notifyObservers(either by the Subject itself or an external controller)`
+	- calls each observer's `notify()`
+3. Each observer calls concreteSubject::getState to query the state and react accordingly
+
+# Some more design patterns
+
+**Factory Method Pattern** - when you don't know exactly what kind of object you want, and your preferences may vary.
+- also called the virtual constructor pattern
+- strategy pattern applied to object construction.
+
+```
+        +-----------+
+        |/Enemy/    |
+        +-----------+
+              ^
+              |
+        +-----+-----+
+        |           |
+    +-------+    +-------+
+    |Turtle |    |Bullet |
+    +-------+    +-------+
+
+- randomly generated
+- more turtles in easy levels
+- more bullets in hard levels
+
+        +-----------+
+        |/Level/    |
+        +-----------+
+              ^
+              |
+        +-----+-----+
+        |           |
+    +-------+    +-------+
+    |Easy   |    |Hard   |
+    +-------+    +-------+
+
+class Level {
+	public:
+	virtual Enemy* getEnemy() = 0;
+};
+
+class Easy: public Level {
+	public:
+	Enemy *getEnemy() override {
+		// mostly turtles
+	}
+};
+
+class Hard: public Level {
+	public:
+	Enemy *getEnemy() override {
+		// mostly bullets
+	}
+};
+
+Level *l = new Easy;
+Enemy *e = l->getEnemy();
+```
+
+Decorator Pattern - add/remove functionality to/from objects at runtime
+eg. add menus/scrollbars to windows - either or both
+- without a combinatorial explosion of subclasses.
+
+```
+             +-------------+
+             |/Component/  |
+             +-------------+<----------------+
+             |+/Operation/ |                 |
+             +-------------+                 |
+                    ^                        |
+                    |                        |
+       +------------+------------+           |
+       |                         |           |
++------------------+      +--------------+   |
+|Concrete Component|      |/Decorator/   |⬦--+
++------------------+      +--------------+
+|+Operation        |             ^
++------------------+             |
+                                 |
+                       +---------+------------+
+                       |                      |
+             +-------------------+   +-------------------+
+             |ConcreteDecoratorA |   |ConcreteDecoratorB |
+             +-------------------+   +-------------------+
+             |+Operation         |   |+Operation         |
+             +-------------------+   +-------------------+
+```
+
+Every Decorator IS a component and HAS a component.
+- window w/ scrollbar is a kind of window, and has a pointer to the underlying plain window.
+- window w/ scrollbar and menu is a window and has a pointer to a window w/ scrollbar, which as a pointer to a plain window.
+
+Eg.
+```c++
+WindowInterface *w = new WindowWithMenu {
+	new WindowWithScrollbar {
+		new Window {}}};
+```
+
+Pizza Example in repository.
+
+### Visitor Pattern
+- for implementing **double dispatch**
+	- method chosen based on the runtime of 2 objects
+
+```
+        +-----------+
+        |/Enemy/    |
+        +-----------+
+              ^
+              |
+        +-----+-----+
+        |           |
+    +-------+    +-------+
+    |Turtle |    |Bullet |
+    +-------+    +-------+
+
+
+
+        +-----------+
+        |/Weapon/   |
+        +-----------+
+              ^
+              |
+        +-----+-----+
+        |           |
+    +-------+    +-------+
+    |Stick  |    |Rock   |
+    +-------+    +-------+
+```
+- The effect of striking an enemy with a weapon depends on both the enemy and the weapon.
+- C++ virtual methods are dispatched on the type of the receiver object, and not method params. No way to specify two receiver objects.
+
+Visitor - two-stage dispatch, combining overriding with overloading.
+```c++
+class Enemy {
+	public:
+	virtual void beStruckBy(Weapon &w) = 0;
+};
+
+class Turtle: public Enemy {
+	public:
+	void beStruckBy(Weapon &w) override {w.strike(*this);}
+};
+
+class Bullet: public Enemy {
+	public:
+	void beStruckBy(Weapon &w) override {w.strike(*this);}
+};
+
+class Weapon {
+	public:
+	virtual void strike(Turtle &t) = 0;
+	virtual void strike(Bullet &b) = 0;
+};
+
+class Stick: public Weapon {
+	public:
+	void strike(Turtle &t) override {
+		//strike turtle with stick
+	}
+
+	void strike(Bullet &b) override {
+		//strike bullet with stick
+	}
+}
+```
+
+```c++
+Enemy *e = new Bullet{...};
+Weapon *e = new Rock{...};
+e->beStruckBy(*w); 
+
+// What happens?
+// Bullet::beStruckBy runs (virt. method dispatch)
+// which calls Weapon::strike(Bullet &b) since *this is a Bullet
+// this fact is known at compile time, overload resolution
+
+// virtual method resolves to Rock::Strike(Bullet &)
+```
+
+Visitor can also be used to add functionality to a class hierarchy without adding new virtual methods.
+
+Add a visitor to the book hierarchy:
+```c++
+class Book {
+	...
+	public:
+	...
+	virtual void accept(BookVisitor &v) {v.visit(*this);}
+};
+
+class Text: public Book {
+	...
+	public:
+	void accept(BookVisitor &v) override {
+		v.visit(*this);
+	}
+};
+
+class BookVisitor {
+	public:
+	virtual void visit(Book &b) = 0;
+	virtual void visit(Text &t) = 0;
+	virtual void visit(Comic &c) = 0;
+};
+```
+
+Example: Categorize and Count.
+- For Books: - by Author
+- Texts: - by Topic
+- Comics: - by Hero
+
+Could do this with a virtual method, or write a visitor.
+```c++
+class Catalog: public BookVisitor {
+	public:
+	map<string, int> theCat;
+	void visit(Book &b) override {++theCat[b.getAuthor()];}
+	void visit(Text &t) override {++theCat[b.getTopic()];}
+	void visit(Comic &c) override {++theCat[c.getHero()];}
+};
+```
+
+### But it won't compile!
+- Circular include dependency
+- book.h, BookVisitor.h include each other.
+- include guard prevents multiple inclusion
+- whichever ends up occurring first will refer to things not yet defined.
+- needless includes create artificial compilation dependencies, and slow down compilation, or prevent compilation altogether.
+
+Sometimes a forward class declaration is not good enough.
+
+Consider:
+```c++
+class A {...}; // A.h
+
+class B {
+	A a;
+};
+
+class C {
+	A *a;
+};
+
+class D: public A {
+	...
+};
+
+class E {
+	A f(A);
+};
+
+class F {
+	A f(A a) {a. someMethod();}
+};
+
+class G {
+	t<A> x;
+};
+```
+Which need includes? B,D,F need includes
+
+C,E forward declare ok.
+
+G - it depends on how the template t uses A.
+- should collapse to one of the other cases.
+
+Note: class F only needs an include because method f's implementation is present.
+- a good resason to keep implementation in .cc
+- where possible: forward declare in .h, include in .cc
+
+Also notice: B needs an include; C does not.
+- If we want to break the compilation dependency of B on A, we could make B like C.
+
+More generally:
+```c++
+class A1{}; class A2{}; class A3{};
+
+class B {
+	A1 a1;
+	A2 a2;
+	A3 a3;
+};
+```
+
+b.h:
+```c++
+class BImpl;
+
+class B {
+	unique_ptr<BImpl> pImpl;
+};
+```
+
+bimpl.h:
+```c++
+#include "a1.h"
+...
+
+struct BImpl {
+	A1 a1;
+	A2 a2;
+	A3 a3;
+};
+```
+
+b.cc:
+```c++
+#include "b.h"
+#include "bimpl.h"
+
+methods reference pImpl -> a1, a2, a3
+```
+
+b.h no longer compilation-dependent on a1.h, etc.
+- called the pImpl idiom.
+
+Another advantage of pImpl - pointers have a non-throwing swap.
+
+Can provide the strong guarantee on a B method by
+- copying the Impl into a new BImpl structure (heap-allocated)
+- method modifies the copy
+- if anything throws, discard the new structure (easy and automatic with unique_ptrs)
+- if all succeeds swap impl structs (ptrswap - nothrow)
+- previous impl automcatically destroyed by the smartptr.
+
+Example:
+```c++
+class B {
+	unique_ptr<BImpl> pImpl;
+	...
+	void f() {
+		auto temp = make_unique<BImpl>(*pImpl);
+		temp->doSomething();
+		temp->doSomethingElse();
+		std::swap(pImpl,temp); // nothrow
+	} // strong guarantee
+};
+```
+
+<hr>
+
+[<<< Previous](22.md)  \|   [Next >>>](23.md)
