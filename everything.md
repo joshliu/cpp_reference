@@ -60,7 +60,7 @@ Now Can we write cat in C++?
 
 The "C++ way"
 - Command line args - same as in C.
-- stdin/stdout: #include <iostream>
+- stdin/stdout: `#include <iostream>`
 ```c++
 #include <iostream>
 int main() {
@@ -71,8 +71,8 @@ int main() {
 ```
 - std::cin, std::cout, std::cerr - streams with types std::istream and std::ostream
 
-- \>> is the input operator, cin >> x, populates x as a side effect, returns cin
-- << is the output operator cout << x + y, prints x+y as a side effect, returns cout
+- `>>` is the input operator, cin >> x, populates x as a side effect, returns cin
+- `<<` is the output operator cout << x + y, prints x+y as a side effect, returns cout
 
 File access: 
 ```c++
@@ -3204,7 +3204,7 @@ Book *p = new Comic{"Spoderman", "Stan Lee", 75, "Spiderman"};
 p->isHeavy(); // still false!
 ```
 - the choice of which isHeavy to run is based on the type of the pointer (static type), not the type of the object (dynamic type).
-- Why? Cheaper. C++ Design Principle: if you don't use you, you shouldn't have to pay for it.
+- Why? Cheaper. C++ Design Principle: if you don't use it, you shouldn't have to pay for it.
 
 i.e. if you want something more expensive, you have to ask for it.
 To make \*p act like a Comic when it is a Comic:
@@ -4705,7 +4705,7 @@ template <typename T, typename Alloc=allocator<T>> class list {...};
 - Every conforming allocator has a member template called rebind that gives the allocator type for another type:
 
 ```c++
-template <typename U> struct allocator {
+template <typename T> struct allocator {
     ...
     template <typename U> struct rebind {
         using other = allocator<U>;
